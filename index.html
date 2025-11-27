@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MD → HTML Converter</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        :root {
+            --bg: #f5f5f5; --editor-bg: #fff; --text: #333; --border: #ddd;
+            --accent: #0073bb; --success: #067d17; --code-bg: #f4f4f4;
+        }
+        .dark {
+            --bg: #1a1a2e; --editor-bg: #16213e; --text: #eee; --border: #333;
+            --accent: #4da6ff; --success: #4ade80; --code-bg: #0f0f23;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg); color: var(--text); min-height: 100vh;
+        }
+        header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 20px; background: var(--editor-bg); border-bottom: 1px solid var(--border);
+            flex-wrap: wrap; gap: 8px;
+        }
+        h1 { font-size: 1.2rem; }
+        .controls { display: flex; gap: 6px; flex-wrap: wrap; }
+        button {
+            padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px;
+            background: var(--editor-bg); color: var(--text); cursor: pointer;
+            font-size: 0.85rem; transition: all 0.2s; white-space: nowrap;
+        }
+        button:hover { border-color: var(--accent); color: var(--accent); }
+        button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+        button.primary:hover { opacity: 0.9; color: #fff; }
+        button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: var(--success); color: #fff; padding: 12px 24px;
+            border-radius: 8px; opacity: 0; transition: opacity 0.3s; z-index: 100;
+        }
+        .toast.show { opacity: 1; }
+        main { display: flex; height: calc(100vh - 57px); }
+        .pane {
+            flex: 1; display: flex; flex-direction: column;
+            border-right: 1px solid var(--border);
+        }
+        .pane:last-child { border-right: none; }
+        .pane-header {
+            padding: 8px 16px; background: var(--editor-bg);
+            border-bottom: 1px solid var(--border); font-weight: 500; font-size: 0.85rem;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        #editor {
+            flex: 1; width: 100%; padding: 16px; border: none; resize: none;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 14px; line-height: 1.6; background: var(--editor-bg);
+            color: var(--text); outline: none;
+        }
+        #preview {
+            flex: 1; padding: 20px 24px; overflow-y: auto;
+            background: var(--editor-bg); color: var(--text);
+        }
+        #preview h1 { font-size: 1.8em; margin: 0.5em 0; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
+        #preview h2 { font-size: 1.5em; margin: 0.8em 0 0.4em; }
+        #preview h3 { font-size: 1.25em; margin: 0.8em 0 0.4em; }
+        #preview p { margin: 0.8em 0; line-height: 1.6; }
+        #preview ul, #preview ol { margin: 0.8em 0; padding-left: 2em; }
+        #preview li { margin: 0.3em 0; line-height: 1.6; }
+        #preview code {
+            background: var(--code-bg); padding: 2px 6px; border-radius: 4px;
+            font-family: 'SF Mono', Monaco, monospace; font-size: 0.9em;
+        }
+        #preview pre {
+            background: var(--code-bg); padding: 16px; border-radius: 8px;
+            overflow-x: auto; margin: 1em 0;
+        }
+        #preview pre code { background: none; padding: 0; }
+        #preview blockquote {
+            border-left: 4px solid var(--accent); margin: 1em 0;
+            padding: 0.5em 1em; background: var(--code-bg); color: var(--text); opacity: 0.9;
+        }
+        #preview table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+        #preview th, #preview td {
+            border: 1px solid var(--border); padding: 10px 12px; text-align: left;
+        }
+        #preview th { background: var(--code-bg); font-weight: 600; }
+        #preview a { color: var(--accent); }
+        #preview img { max-width: 100%; height: auto; }
+        #preview hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
+        #preview .mermaid-container { margin: 1em 0; background: #fff; padding: 16px; border-radius: 8px; }
+        #preview .mermaid-container svg { max-width: 100%; height: auto; }
+        .drop-zone {
+            position: absolute; inset: 0; background: rgba(0,115,187,0.1);
+            border: 3px dashed var(--accent); display: none;
+            align-items: center; justify-content: center; font-size: 1.2rem;
+            color: var(--accent); z-index: 50;
+        }
+        .drop-zone.active { display: flex; }
+        .file-input { display: none; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>📝 MD → HTML</h1>
+        <div class="controls">
+            <button onclick="document.getElementById('fileInput').click()">📁 Open</button>
+            <button onclick="cleanupLLM()">🧹 Cleanup</button>
+            <button onclick="downloadHTML()">💾 HTML</button>
+            <button onclick="copyForWord()">📄 Word</button>
+            <button id="excelBtn" onclick="exportExcel()" style="display:none">📊 Excel</button>
+            <button onclick="copyRaw()">🔤 Code</button>
+            <button onclick="copyRich()" class="primary">📋 Copy</button>
+            <button onclick="toggleTheme()">🌓</button>
+        </div>
+    </header>
+    <main>
+        <div class="pane" style="position: relative;">
+            <div class="pane-header">
+                <span>Markdown</span>
+            </div>
+            <textarea id="editor" placeholder="Paste or type your markdown here...
+
+Supports:
+• Headers, bold, italic
+• Lists (ordered & unordered)
+• Code blocks
+• Tables
+• Blockquotes
+• Mermaid diagrams
+
+Drag & drop .md files to load them.
+Use 🧹 Cleanup to remove LLM filler text."></textarea>
+            <div class="drop-zone" id="dropZone">Drop .md file here</div>
+        </div>
+        <div class="pane">
+            <div class="pane-header">Preview</div>
+            <div id="preview" contenteditable="true"></div>
+        </div>
+    </main>
+    <input type="file" id="fileInput" class="file-input" accept=".md,.markdown,.txt">
+    <div class="toast" id="toast">Copied!</div>
+
+    <script>
+        const editor = document.getElementById('editor');
+        const preview = document.getElementById('preview');
+        const toast = document.getElementById('toast');
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+
+        // Custom renderer for mermaid
+        const renderer = new marked.Renderer();
+        const origCode = renderer.code.bind(renderer);
+        renderer.code = function(code, lang) {
+            if (lang === 'mermaid') {
+                return `<div class="mermaid-container"><pre class="mermaid">${code}</pre></div>`;
+            }
+            return origCode(code, lang);
+        };
+        marked.setOptions({ breaks: true, gfm: true, renderer });
+
+        async function render() {
+            const html = DOMPurify.sanitize(marked.parse(editor.value), {
+                ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','br','hr','ul','ol','li','blockquote','pre','code','table','thead','tbody','tr','th','td','a','img','strong','b','em','i','u','s','del','sub','sup','span','div'],
+                ALLOWED_ATTR: ['href','src','alt','title','class']
+            });
+            preview.innerHTML = html || '<p style="color:#999">Preview will appear here...</p>';
+            
+            // Show Excel button only if tables exist
+            document.getElementById('excelBtn').style.display = 
+                preview.querySelector('table') ? 'inline-block' : 'none';
+            
+            // Render mermaid diagrams
+            try {
+                await mermaid.run({ nodes: preview.querySelectorAll('.mermaid') });
+            } catch(e) {}
+        }
+
+        editor.addEventListener('input', render);
+
+        function showToast(msg) {
+            toast.textContent = msg;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2000);
+        }
+
+        // LLM Cleanup - removes common filler phrases
+        function cleanupLLM() {
+            const patterns = [
+                /^(Here'?s?|Below is|The following is|I'?ve created|I have created|Sure[,!]?|Certainly[,!]?|Of course[,!]?|Absolutely[,!]?)[\s\S]*?:\s*\n+/gim,
+                /^(Here you go|As requested|As you asked|Let me)[\s\S]*?:\s*\n+/gim,
+                /^(This is|These are)[\s\S]*?(you (asked|requested|wanted)|for you)[\s\S]*?:\s*\n+/gim,
+                /\n+(Let me know if|Hope this helps|Feel free to|Is there anything else|Would you like me to)[\s\S]*$/gim,
+                /\n+(I hope this|Please let me know|Don't hesitate)[\s\S]*$/gim,
+            ];
+            let text = editor.value;
+            patterns.forEach(p => text = text.replace(p, ''));
+            editor.value = text.trim();
+            render();
+            showToast('✓ LLM filler removed');
+        }
+
+        function copyRich() {
+            const range = document.createRange();
+            range.selectNodeContents(preview);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            document.execCommand('copy');
+            sel.removeAllRanges();
+            showToast('✓ Copied for Docs');
+        }
+
+        function copyRaw() {
+            navigator.clipboard.writeText(preview.innerHTML);
+            showToast('✓ HTML copied');
+        }
+
+        // Copy with inline styles for Word/Excel
+        function copyForWord() {
+            const clone = preview.cloneNode(true);
+            
+            // Add inline styles for Word compatibility
+            clone.querySelectorAll('table').forEach(t => {
+                t.setAttribute('style', 'border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;');
+            });
+            clone.querySelectorAll('th').forEach(th => {
+                th.setAttribute('style', 'border:1px solid #000;padding:8px 12px;background-color:#f0f0f0;font-weight:bold;text-align:left;');
+            });
+            clone.querySelectorAll('td').forEach(td => {
+                td.setAttribute('style', 'border:1px solid #000;padding:8px 12px;text-align:left;');
+            });
+            clone.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+                const sizes = {H1:'24pt',H2:'18pt',H3:'14pt',H4:'12pt',H5:'11pt',H6:'10pt'};
+                h.setAttribute('style', `font-size:${sizes[h.tagName]};font-weight:bold;margin:12px 0;font-family:Calibri,Arial,sans-serif;`);
+            });
+            clone.querySelectorAll('p,li').forEach(p => {
+                p.setAttribute('style', 'font-family:Calibri,Arial,sans-serif;font-size:11pt;line-height:1.5;margin:6px 0;');
+            });
+            clone.querySelectorAll('code').forEach(c => {
+                c.setAttribute('style', 'font-family:Consolas,Monaco,monospace;background-color:#f4f4f4;padding:2px 4px;');
+            });
+            clone.querySelectorAll('pre').forEach(pre => {
+                pre.setAttribute('style', 'font-family:Consolas,Monaco,monospace;background-color:#f4f4f4;padding:12px;margin:8px 0;white-space:pre-wrap;');
+            });
+
+            const html = clone.innerHTML;
+            const blob = new Blob([html], { type: 'text/html' });
+            navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/html': blob,
+                    'text/plain': new Blob([preview.innerText], { type: 'text/plain' })
+                })
+            ]).then(() => showToast('✓ Copied for Word'));
+        }
+
+        function exportExcel() {
+            const tables = preview.querySelectorAll('table');
+            if (!tables.length) return;
+            
+            let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body>';
+            tables.forEach(t => {
+                const clone = t.cloneNode(true);
+                clone.setAttribute('border', '1');
+                clone.querySelectorAll('th,td').forEach(cell => {
+                    cell.setAttribute('style', 'border:1px solid #000;padding:8px;');
+                });
+                html += clone.outerHTML + '<br>';
+            });
+            html += '</body></html>';
+            
+            const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'table.xls';
+            a.click();
+            showToast('✓ Excel file downloaded');
+        }
+
+        function downloadHTML() {
+            const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+                body{font-family:-apple-system,sans-serif;max-width:800px;margin:40px auto;padding:20px;line-height:1.6}
+                code{background:#f4f4f4;padding:2px 6px;border-radius:4px}
+                pre{background:#f4f4f4;padding:16px;border-radius:8px;overflow-x:auto}
+                blockquote{border-left:4px solid #0073bb;margin:1em 0;padding:0.5em 1em;background:#f9f9f9}
+                table{border-collapse:collapse;width:100%}th,td{border:1px solid #000;padding:10px}
+                th{background:#f5f5f5}
+            </style></head><body>${preview.innerHTML}</body></html>`;
+            const blob = new Blob([html], { type: 'text/html' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'document.html';
+            a.click();
+        }
+
+        function toggleTheme() {
+            document.body.classList.toggle('dark');
+        }
+
+        // Drag & drop
+        ['dragenter', 'dragover'].forEach(e => {
+            document.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('active'); });
+        });
+        ['dragleave', 'drop'].forEach(e => {
+            document.addEventListener(e, () => dropZone.classList.remove('active'));
+        });
+        document.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files[0]) loadFile(e.target.files[0]);
+        });
+
+        function loadFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => { editor.value = e.target.result; render(); showToast('✓ File loaded'); };
+            reader.readAsText(file);
+        }
+
+        render();
+    </script>
+</body>
+</html>
