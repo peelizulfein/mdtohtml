@@ -155,12 +155,12 @@ Use 🧹 Cleanup to remove LLM filler text."></textarea>
 
         // Custom renderer for mermaid
         const renderer = new marked.Renderer();
-        const origCode = renderer.code.bind(renderer);
-        renderer.code = function(code, lang) {
+        renderer.code = function({ text, lang }) {
             if (lang === 'mermaid') {
-                return `<div class="mermaid-container"><pre class="mermaid">${code}</pre></div>`;
+                return `<div class="mermaid-container"><pre class="mermaid">${text}</pre></div>`;
             }
-            return origCode(code, lang);
+            const escaped = text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return `<pre><code class="language-${lang || ''}">${escaped}</code></pre>`;
         };
         marked.setOptions({ breaks: true, gfm: true, renderer });
 
