@@ -6,7 +6,7 @@ A zero-install, privacy-first tool that converts Markdown to rich HTML you can p
 
 🌐 **[Try it live](https://peelizulfein.github.io/mdtohtml)** — no install needed
 
-![Screenshot](screenshot.png)
+![Screenshot](mdtohtml.png)
 
 ---
 
