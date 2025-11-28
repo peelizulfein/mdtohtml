@@ -46,9 +46,14 @@
         main { display: flex; height: calc(100vh - 57px); }
         .pane {
             flex: 1; display: flex; flex-direction: column;
-            border-right: 1px solid var(--border);
+            min-width: 200px; overflow: hidden;
         }
-        .pane:last-child { border-right: none; }
+        .pane:first-child { border-right: 1px solid var(--border); }
+        .resizer {
+            width: 6px; background: var(--border); cursor: col-resize;
+            transition: background 0.2s; flex-shrink: 0;
+        }
+        .resizer:hover, .resizer.dragging { background: var(--accent); }
         .pane-header {
             padding: 8px 16px; background: var(--editor-bg);
             border-bottom: 1px solid var(--border); font-weight: 500; font-size: 0.85rem;
@@ -91,8 +96,9 @@
         #preview a { color: var(--accent); }
         #preview img { max-width: 100%; height: auto; }
         #preview hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
-        #preview .mermaid-container { margin: 1em 0; background: #fff; padding: 16px; border-radius: 8px; }
-        #preview .mermaid-container svg { max-width: 100%; height: auto; }
+        #preview .mermaid-container { margin: 1em 0; background: #fff; padding: 16px; border-radius: 8px; text-align: center; }
+        #preview .mermaid-container svg { max-width: 100%; height: auto; display: inline-block; }
+        #preview .mermaid-error { color: #c00; background: #fee; padding: 8px; border-radius: 4px; font-size: 0.85em; }
         .drop-zone {
             position: absolute; inset: 0; background: rgba(0,115,187,0.1);
             border: 3px dashed var(--accent); display: none;
@@ -108,7 +114,6 @@
         <h1>📝 MD → HTML</h1>
         <div class="controls">
             <button onclick="document.getElementById('fileInput').click()">📁 Open</button>
-            <button onclick="cleanupLLM()">🧹 Cleanup</button>
             <button onclick="downloadHTML()">💾 HTML</button>
             <button onclick="copyForWord()">📄 Word</button>
             <button id="excelBtn" onclick="exportExcel()" style="display:none">📊 Excel</button>
@@ -118,7 +123,7 @@
         </div>
     </header>
     <main>
-        <div class="pane" style="position: relative;">
+        <div class="pane" id="editorPane" style="position: relative;">
             <div class="pane-header">
                 <span>Markdown</span>
             </div>
@@ -132,12 +137,12 @@ Supports:
 • Blockquotes
 • Mermaid diagrams
 
-Drag & drop .md files to load them.
-Use 🧹 Cleanup to remove LLM filler text."></textarea>
+Drag & drop .md files to load them."></textarea>
             <div class="drop-zone" id="dropZone">Drop .md file here</div>
         </div>
-        <div class="pane">
-            <div class="pane-header">Preview</div>
+        <div class="resizer" id="resizer"></div>
+        <div class="pane" id="previewPane">
+            <div class="pane-header">Preview <span style="font-weight:normal;font-size:0.75rem;color:var(--accent)">(editable - syncs back to MD)</span></div>
             <div id="preview" contenteditable="true"></div>
         </div>
     </main>
@@ -150,24 +155,31 @@ Use 🧹 Cleanup to remove LLM filler text."></textarea>
         const toast = document.getElementById('toast');
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
+        const resizer = document.getElementById('resizer');
+        const editorPane = document.getElementById('editorPane');
+        const previewPane = document.getElementById('previewPane');
 
-        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
 
         // Custom renderer for mermaid
         const renderer = new marked.Renderer();
+        let mermaidId = 0;
         renderer.code = function({ text, lang }) {
             if (lang === 'mermaid') {
-                return `<div class="mermaid-container"><pre class="mermaid">${text}</pre></div>`;
+                const id = `mermaid-${mermaidId++}`;
+                return `<div class="mermaid-container"><pre class="mermaid" id="${id}">${text}</pre></div>`;
             }
             const escaped = text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
             return `<pre><code class="language-${lang || ''}">${escaped}</code></pre>`;
         };
         marked.setOptions({ breaks: true, gfm: true, renderer });
 
+        let renderTimeout;
         async function render() {
+            mermaidId = 0;
             const html = DOMPurify.sanitize(marked.parse(editor.value), {
                 ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','br','hr','ul','ol','li','blockquote','pre','code','table','thead','tbody','tr','th','td','a','img','strong','b','em','i','u','s','del','sub','sup','span','div'],
-                ALLOWED_ATTR: ['href','src','alt','title','class']
+                ALLOWED_ATTR: ['href','src','alt','title','class','id']
             });
             preview.innerHTML = html || '<p style="color:#999">Preview will appear here...</p>';
             
@@ -175,34 +187,150 @@ Use 🧹 Cleanup to remove LLM filler text."></textarea>
             document.getElementById('excelBtn').style.display = 
                 preview.querySelector('table') ? 'inline-block' : 'none';
             
-            // Render mermaid diagrams
-            try {
-                await mermaid.run({ nodes: preview.querySelectorAll('.mermaid') });
-            } catch(e) {}
+            // Render mermaid diagrams with better error handling
+            const mermaidNodes = preview.querySelectorAll('.mermaid');
+            for (const node of mermaidNodes) {
+                const code = node.textContent.trim();
+                const container = node.parentElement;
+                try {
+                    const { svg } = await mermaid.render(node.id + '-svg', code);
+                    container.innerHTML = svg;
+                } catch(e) {
+                    container.innerHTML = `<div class="mermaid-error">⚠️ Mermaid error: ${e.message || 'Invalid diagram syntax'}</div><pre style="text-align:left;font-size:0.8em;margin-top:8px">${code}</pre>`;
+                }
+            }
         }
 
-        editor.addEventListener('input', render);
+        editor.addEventListener('input', () => {
+            clearTimeout(renderTimeout);
+            renderTimeout = setTimeout(render, 150);
+        });
+
+        // Bi-directional: HTML to Markdown conversion
+        function htmlToMarkdown(element) {
+            let md = '';
+            const walk = (node, listDepth = 0, listType = null) => {
+                if (node.nodeType === 3) { // text node
+                    md += node.textContent;
+                    return;
+                }
+                if (node.nodeType !== 1) return;
+                
+                const tag = node.tagName.toLowerCase();
+                const children = () => [...node.childNodes].forEach(c => walk(c, listDepth, listType));
+                
+                switch(tag) {
+                    case 'h1': md += '# '; children(); md += '\n\n'; break;
+                    case 'h2': md += '## '; children(); md += '\n\n'; break;
+                    case 'h3': md += '### '; children(); md += '\n\n'; break;
+                    case 'h4': md += '#### '; children(); md += '\n\n'; break;
+                    case 'h5': md += '##### '; children(); md += '\n\n'; break;
+                    case 'h6': md += '###### '; children(); md += '\n\n'; break;
+                    case 'p': children(); md += '\n\n'; break;
+                    case 'br': md += '\n'; break;
+                    case 'hr': md += '\n---\n\n'; break;
+                    case 'strong': case 'b': md += '**'; children(); md += '**'; break;
+                    case 'em': case 'i': md += '*'; children(); md += '*'; break;
+                    case 'code':
+                        if (node.parentElement?.tagName.toLowerCase() === 'pre') children();
+                        else { md += '`'; children(); md += '`'; }
+                        break;
+                    case 'pre':
+                        const codeEl = node.querySelector('code');
+                        const lang = codeEl?.className.replace('language-', '') || '';
+                        md += '```' + lang + '\n' + (codeEl?.textContent || node.textContent) + '\n```\n\n';
+                        break;
+                    case 'blockquote':
+                        const lines = [];
+                        [...node.childNodes].forEach(c => {
+                            let tmp = '';
+                            const getText = (n) => {
+                                if (n.nodeType === 3) tmp += n.textContent;
+                                else if (n.nodeType === 1) [...n.childNodes].forEach(getText);
+                            };
+                            getText(c);
+                            if (tmp.trim()) lines.push(tmp.trim());
+                        });
+                        md += lines.map(l => '> ' + l).join('\n') + '\n\n';
+                        break;
+                    case 'ul': [...node.children].forEach(c => walk(c, listDepth, 'ul')); md += listDepth === 0 ? '\n' : ''; break;
+                    case 'ol': [...node.children].forEach(c => walk(c, listDepth, 'ol')); md += listDepth === 0 ? '\n' : ''; break;
+                    case 'li':
+                        const indent = '  '.repeat(listDepth);
+                        const bullet = listType === 'ol' ? '1. ' : '- ';
+                        md += indent + bullet;
+                        [...node.childNodes].forEach(c => {
+                            if (c.tagName === 'UL' || c.tagName === 'OL') walk(c, listDepth + 1, c.tagName.toLowerCase());
+                            else walk(c, listDepth, listType);
+                        });
+                        md += '\n';
+                        break;
+                    case 'a':
+                        md += '['; children(); md += '](' + (node.href || '') + ')';
+                        break;
+                    case 'img':
+                        md += '![' + (node.alt || '') + '](' + (node.src || '') + ')';
+                        break;
+                    case 'table':
+                        const rows = [...node.querySelectorAll('tr')];
+                        rows.forEach((row, i) => {
+                            const cells = [...row.querySelectorAll('th, td')];
+                            md += '| ' + cells.map(c => c.textContent.trim()).join(' | ') + ' |\n';
+                            if (i === 0 && row.querySelector('th')) {
+                                md += '| ' + cells.map(() => '---').join(' | ') + ' |\n';
+                            }
+                        });
+                        md += '\n';
+                        break;
+                    case 'div':
+                        if (node.classList.contains('mermaid-container')) {
+                            const mermaidPre = node.querySelector('.mermaid');
+                            if (mermaidPre) md += '```mermaid\n' + mermaidPre.textContent + '\n```\n\n';
+                        } else children();
+                        break;
+                    default: children();
+                }
+            };
+            [...element.childNodes].forEach(c => walk(c));
+            return md.replace(/\n{3,}/g, '\n\n').trim();
+        }
+
+        let syncTimeout;
+        preview.addEventListener('input', () => {
+            clearTimeout(syncTimeout);
+            syncTimeout = setTimeout(() => {
+                editor.value = htmlToMarkdown(preview);
+            }, 500);
+        });
+
+        // Resizable panes
+        let isResizing = false;
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            resizer.classList.add('dragging');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const container = document.querySelector('main');
+            const containerRect = container.getBoundingClientRect();
+            const percent = ((e.clientX - containerRect.left) / containerRect.width) * 100;
+            const clamped = Math.min(Math.max(percent, 20), 80);
+            editorPane.style.flex = `0 0 ${clamped}%`;
+            previewPane.style.flex = `0 0 ${100 - clamped - 1}%`;
+        });
+        document.addEventListener('mouseup', () => {
+            isResizing = false;
+            resizer.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        });
 
         function showToast(msg) {
             toast.textContent = msg;
             toast.classList.add('show');
             setTimeout(() => toast.classList.remove('show'), 2000);
-        }
-
-        // LLM Cleanup - removes common filler phrases
-        function cleanupLLM() {
-            const patterns = [
-                /^(Here'?s?|Below is|The following is|I'?ve created|I have created|Sure[,!]?|Certainly[,!]?|Of course[,!]?|Absolutely[,!]?)[\s\S]*?:\s*\n+/gim,
-                /^(Here you go|As requested|As you asked|Let me)[\s\S]*?:\s*\n+/gim,
-                /^(This is|These are)[\s\S]*?(you (asked|requested|wanted)|for you)[\s\S]*?:\s*\n+/gim,
-                /\n+(Let me know if|Hope this helps|Feel free to|Is there anything else|Would you like me to)[\s\S]*$/gim,
-                /\n+(I hope this|Please let me know|Don't hesitate)[\s\S]*$/gim,
-            ];
-            let text = editor.value;
-            patterns.forEach(p => text = text.replace(p, ''));
-            editor.value = text.trim();
-            render();
-            showToast('✓ LLM filler removed');
         }
 
         function copyRich() {

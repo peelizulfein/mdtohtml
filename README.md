@@ -16,11 +16,10 @@ If you work with LLMs (ChatGPT, Claude, Gemini, etc.), you know the drill:
 
 1. You get beautifully formatted markdown output
 2. You need to share it in a "real" document for your team
-3. You spend 10 minutes fighting with pandoc, fixing table borders, and deleting "Here's the information you requested!" filler
 
 **This tool eliminates that friction.**
 
-Paste your markdown, click copy, paste into your doc. Done. Your formatting survives, your tables have borders, and the LLM's conversational fluff is gone.
+Paste your markdown, click copy, paste into your doc. Done. Your formatting survives and your tables have borders.
 
 ---
 
@@ -30,18 +29,17 @@ Paste your markdown, click copy, paste into your doc. Done. Your formatting surv
 |-------|--------|
 | Raw markdown from any LLM | Rich formatted HTML |
 | Messy tables with no borders | Clean tables that paste perfectly into Word |
-| "Sure! Here's the table you asked for:" | Just the table |
 | Mermaid diagram code | Visual flowcharts you can paste into PowerPoint |
 
 ---
 
 ## Features
 
-### 🧹 LLM Cleanup
-One-click removal of conversational filler. Strips phrases like:
-- "Here's the table you requested:"
-- "Sure! Below is..."
-- "Let me know if you need anything else!"
+### 🔄 Bi-directional Editing
+Edit in Markdown or directly in the HTML preview — changes sync both ways.
+
+### ↔️ Resizable Panes
+Drag the divider to adjust the editor and preview sizes to your preference.
 
 ### 📄 Word/Excel Mode
 Copies with inline styles so tables paste with proper borders and formatting in Microsoft Office.
@@ -111,10 +109,9 @@ Download `index.html` and double-click it. That's it.
 ```
 
 1. **Paste** your markdown into the left pane (or drag a `.md` file)
-2. **Click 🧹 Cleanup** to strip LLM filler (optional)
-3. **Edit** the preview if needed (it's editable!)
-4. **Click 📋 Copy** for general use, or **📄 Word** for Microsoft Office
-5. **Paste** into your document
+2. **Edit** the preview if needed (it's editable and syncs back!)
+3. **Click 📋 Copy** for general use, or **📄 Word** for Microsoft Office
+4. **Paste** into your document
 
 ---
 
@@ -123,7 +120,6 @@ Download `index.html` and double-click it. That's it.
 | Button | What It Does |
 |--------|--------------|
 | 📁 Open | Load a `.md` file from your computer |
-| 🧹 Cleanup | Remove LLM conversational filler |
 | 💾 HTML | Download as standalone HTML file |
 | 📄 Word | Copy with inline styles for Microsoft Office |
 | 📊 Excel | Export tables to `.xls` (only shows when tables exist) |
