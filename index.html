@@ -99,6 +99,11 @@
         #preview .mermaid-container { margin: 1em 0; background: #fff; padding: 16px; border-radius: 8px; text-align: center; }
         #preview .mermaid-container svg { max-width: 100%; height: auto; display: inline-block; }
         #preview .mermaid-error { color: #c00; background: #fee; padding: 8px; border-radius: 4px; font-size: 0.85em; }
+        .debug-panel { background: var(--code-bg); border-top: 1px solid var(--border); padding: 12px; font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto; display: none; }
+        .debug-panel.show { display: block; }
+        .debug-panel .debug-error { color: #c00; }
+        .debug-panel .debug-info { color: var(--accent); }
+        .debug-panel .debug-success { color: var(--success); }
         .drop-zone {
             position: absolute; inset: 0; background: rgba(0,115,187,0.1);
             border: 3px dashed var(--accent); display: none;
@@ -117,8 +122,10 @@
             <button onclick="downloadHTML()">💾 HTML</button>
             <button onclick="copyForWord()">📄 Word</button>
             <button id="excelBtn" onclick="exportExcel()" style="display:none">📊 Excel</button>
+            <button id="pngBtn" onclick="exportPNG()" style="display:none">🖼️ PNG</button>
             <button onclick="copyRaw()">🔤 Code</button>
             <button onclick="copyRich()" class="primary">📋 Copy</button>
+            <button id="debugBtn" onclick="toggleDebug()">🐛</button>
             <button onclick="toggleTheme()">🌓</button>
         </div>
     </header>
@@ -138,6 +145,7 @@ Supports:
 • Mermaid diagrams
 
 Drag & drop .md files to load them."></textarea>
+            <div id="debugPanel" class="debug-panel"></div>
             <div class="drop-zone" id="dropZone">Drop .md file here</div>
         </div>
         <div class="resizer" id="resizer"></div>
@@ -158,6 +166,8 @@ Drag & drop .md files to load them."></textarea>
         const resizer = document.getElementById('resizer');
         const editorPane = document.getElementById('editorPane');
         const previewPane = document.getElementById('previewPane');
+        const debugPanel = document.getElementById('debugPanel');
+        let debugMode = false;
 
         mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
 
@@ -175,29 +185,161 @@ Drag & drop .md files to load them."></textarea>
         marked.setOptions({ breaks: true, gfm: true, renderer });
 
         let renderTimeout;
+        
+        function validateMarkdown(text) {
+            const issues = [];
+            const lines = text.split('\n');
+            
+            // Use marked's lexer to tokenize and find issues
+            try {
+                const tokens = marked.lexer(text);
+                
+                // Check for unmatched delimiters in paragraphs (marked leaves them as-is)
+                const checkUnmatched = (str, line) => {
+                    // Unclosed code
+                    const backticks = (str.match(/`/g) || []).length;
+                    if (backticks % 2 !== 0) issues.push({ line, msg: 'Unclosed inline code (`)' });
+                    // Unclosed bold
+                    const bold = (str.match(/\*\*/g) || []).length;
+                    if (bold % 2 !== 0) issues.push({ line, msg: 'Unclosed bold (**)' });
+                    // Unclosed italic (single * not in **)
+                    const stripped = str.replace(/\*\*/g, '');
+                    const italic = (stripped.match(/(?<!\*)\*(?!\*)/g) || []).length;
+                    if (italic % 2 !== 0) issues.push({ line, msg: 'Unclosed italic (*)' });
+                    // Broken links
+                    if (/\[[^\]]*\](?!\(|:)/.test(str) || /\[[^\]]*$/.test(str)) 
+                        issues.push({ line, msg: 'Incomplete link syntax' });
+                };
+                
+                const walkTokens = (tokens, lineOffset = 0) => {
+                    tokens.forEach(token => {
+                        const line = lineOffset + (token.raw?.split('\n').length || 1);
+                        
+                        // Check raw text in paragraph/text tokens for unmatched syntax
+                        if (token.type === 'paragraph' || token.type === 'text') {
+                            checkUnmatched(token.raw || '', line);
+                        }
+                        
+                        // Code block without closing
+                        if (token.type === 'code' && !token.raw?.trim().endsWith('```')) {
+                            issues.push({ line, msg: 'Code block may be unclosed' });
+                        }
+                        
+                        // Table validation
+                        if (token.type === 'table') {
+                            const headerCols = token.header?.length || 0;
+                            token.rows?.forEach((row, i) => {
+                                if (row.length !== headerCols) 
+                                    issues.push({ line: line + i + 2, msg: `Table row ${i+1}: expected ${headerCols} cols, got ${row.length}` });
+                            });
+                        }
+                        
+                        // Recurse into nested tokens
+                        if (token.tokens) walkTokens(token.tokens, line);
+                        if (token.items) token.items.forEach(item => item.tokens && walkTokens(item.tokens, line));
+                    });
+                };
+                
+                walkTokens(tokens);
+                
+            } catch (e) {
+                issues.push({ line: null, msg: `Parser error: ${e.message}` });
+            }
+            
+            // Check unclosed fenced code blocks (triple backticks)
+            const fences = (text.match(/^```/gm) || []).length;
+            if (fences % 2 !== 0) issues.push({ line: null, msg: 'Unclosed fenced code block (```)' });
+            
+            // Check for broken table syntax
+            let inTable = false, tableStartLine = 0, headerCols = 0;
+            lines.forEach((line, i) => {
+                const trimmed = line.trim();
+                // Detect table row (starts with |)
+                if (trimmed.startsWith('|')) {
+                    const cols = (trimmed.match(/\|/g) || []).length;
+                    const endsWithPipe = trimmed.endsWith('|');
+                    
+                    if (!inTable) {
+                        // Starting a new table
+                        inTable = true;
+                        tableStartLine = i + 1;
+                        headerCols = cols;
+                        if (!endsWithPipe) issues.push({ line: i + 1, msg: 'Table row missing closing |' });
+                    } else {
+                        // Check separator row (second row should be |---|---|)
+                        if (i === tableStartLine) {
+                            if (!endsWithPipe) issues.push({ line: i + 1, msg: 'Table separator row missing closing |' });
+                            if (!/^\|[\s\-:|]+\|$/.test(trimmed)) issues.push({ line: i + 1, msg: 'Malformed table separator row' });
+                        }
+                        if (!endsWithPipe) issues.push({ line: i + 1, msg: 'Table row missing closing |' });
+                        if (cols !== headerCols) issues.push({ line: i + 1, msg: `Table column count mismatch (expected ${headerCols}, got ${cols})` });
+                    }
+                } else if (inTable && trimmed === '') {
+                    inTable = false; // Table ended
+                } else if (inTable && !trimmed.startsWith('|')) {
+                    inTable = false; // Table ended with non-table content
+                }
+            });
+            
+            return issues;
+        }
+        
         async function render() {
+            const debugLog = [];
             mermaidId = 0;
-            const html = DOMPurify.sanitize(marked.parse(editor.value), {
+            
+            // Colors supported via standard HTML: <span style="color:red">text</span>
+            let processed = editor.value;
+            
+            debugLog.push({ type: 'info', msg: `Input: ${editor.value.length} chars` });
+            
+            // Validate markdown
+            const mdIssues = validateMarkdown(editor.value);
+            mdIssues.forEach(issue => {
+                debugLog.push({ type: 'error', msg: `Line ${issue.line || '?'}: ${issue.msg}` });
+            });
+            if (mdIssues.length === 0) debugLog.push({ type: 'success', msg: 'Markdown syntax OK' });
+            
+            const html = DOMPurify.sanitize(marked.parse(processed), {
                 ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','br','hr','ul','ol','li','blockquote','pre','code','table','thead','tbody','tr','th','td','a','img','strong','b','em','i','u','s','del','sub','sup','span','div'],
-                ALLOWED_ATTR: ['href','src','alt','title','class','id']
+                ALLOWED_ATTR: ['href','src','alt','title','class','id','style']
             });
             preview.innerHTML = html || '<p style="color:#999">Preview will appear here...</p>';
             
+            debugLog.push({ type: 'success', msg: `Output: ${html.length} chars HTML` });
+            
             // Show Excel button only if tables exist
-            document.getElementById('excelBtn').style.display = 
-                preview.querySelector('table') ? 'inline-block' : 'none';
+            const tableCount = preview.querySelectorAll('table').length;
+            document.getElementById('excelBtn').style.display = tableCount ? 'inline-block' : 'none';
+            if (tableCount) debugLog.push({ type: 'info', msg: `Tables found: ${tableCount}` });
+            
+            // Show PNG button if SVGs exist (from Mermaid)
+            const svgCount = preview.querySelectorAll('svg').length;
+            document.getElementById('pngBtn').style.display = svgCount ? 'inline-block' : 'none';
+            if (svgCount) debugLog.push({ type: 'info', msg: `SVG diagrams: ${svgCount}` });
             
             // Render mermaid diagrams with better error handling
             const mermaidNodes = preview.querySelectorAll('.mermaid');
+            debugLog.push({ type: 'info', msg: `Mermaid diagrams: ${mermaidNodes.length}` });
+            
             for (const node of mermaidNodes) {
                 const code = node.textContent.trim();
                 const container = node.parentElement;
                 try {
                     const { svg } = await mermaid.render(node.id + '-svg', code);
                     container.innerHTML = svg;
+                    debugLog.push({ type: 'success', msg: `Mermaid OK: ${code.substring(0, 30)}...` });
                 } catch(e) {
                     container.innerHTML = `<div class="mermaid-error">⚠️ Mermaid error: ${e.message || 'Invalid diagram syntax'}</div><pre style="text-align:left;font-size:0.8em;margin-top:8px">${code}</pre>`;
+                    debugLog.push({ type: 'error', msg: `Mermaid error: ${e.message}` });
                 }
+            }
+            
+            // Update debug panel
+            if (debugMode) {
+                debugPanel.innerHTML = debugLog.map(d => 
+                    `<div class="debug-${d.type}">[${d.type.toUpperCase()}] ${d.msg}</div>`
+                ).join('');
             }
         }
 
@@ -424,6 +566,44 @@ Drag & drop .md files to load them."></textarea>
             a.href = URL.createObjectURL(blob);
             a.download = 'document.html';
             a.click();
+        }
+
+        function exportPNG() {
+            const svgs = preview.querySelectorAll('svg');
+            if (!svgs.length) return;
+            
+            svgs.forEach((svg, i) => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const svgData = new XMLSerializer().serializeToString(svg);
+                const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+                const url = URL.createObjectURL(svgBlob);
+                const img = new Image();
+                
+                img.onload = () => {
+                    canvas.width = img.width * 2;
+                    canvas.height = img.height * 2;
+                    ctx.scale(2, 2);
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0);
+                    URL.revokeObjectURL(url);
+                    
+                    const a = document.createElement('a');
+                    a.download = `diagram${svgs.length > 1 ? '-' + (i + 1) : ''}.png`;
+                    a.href = canvas.toDataURL('image/png');
+                    a.click();
+                };
+                img.src = url;
+            });
+            showToast(`✓ ${svgs.length} PNG${svgs.length > 1 ? 's' : ''} downloaded`);
+        }
+
+        function toggleDebug() {
+            debugMode = !debugMode;
+            debugPanel.classList.toggle('show', debugMode);
+            document.getElementById('debugBtn').classList.toggle('active', debugMode);
+            if (debugMode) render();
         }
 
         function toggleTheme() {
