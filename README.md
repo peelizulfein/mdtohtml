@@ -50,6 +50,15 @@ Export button appears automatically when your markdown contains tables. Download
 ### 📈 Mermaid Diagrams
 LLMs love generating Mermaid flowcharts. This tool renders them as images you can copy into presentations.
 
+### 🖼️ PNG Export
+Export Mermaid diagrams as high-resolution PNG files for use in presentations or documents.
+
+### 🐛 Debug Mode
+Toggle the debug panel to validate your markdown and catch syntax errors like unclosed code blocks, broken tables, or mismatched formatting.
+
+### 🎨 Color Support
+Use standard HTML for colored text: `<span style="color:red">red text</span>`
+
 ### ✏️ Editable Preview
 Click the preview pane to make last-minute edits before copying.
 
@@ -123,8 +132,10 @@ Download `index.html` and double-click it. That's it.
 | 💾 HTML | Download as standalone HTML file |
 | 📄 Word | Copy with inline styles for Microsoft Office |
 | 📊 Excel | Export tables to `.xls` (only shows when tables exist) |
+| 🖼️ PNG | Export Mermaid diagrams as PNG (only shows when diagrams exist) |
 | 🔤 Code | Copy raw HTML for developers |
 | 📋 Copy | Copy rich text for Quip, Google Docs, Notion |
+| 🐛 | Toggle debug panel to validate markdown |
 | 🌓 | Toggle dark/light mode |
 
 ---
@@ -144,6 +155,7 @@ Download `index.html` and double-click it. That's it.
 | Images | `![alt](url)` |
 | Task lists | `- [ ]` or `- [x]` |
 | Mermaid | ` ```mermaid ` |
+| Colors | `<span style="color:red">text</span>` |
 
 ---
 
